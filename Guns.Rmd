@@ -1,0 +1,373 @@
+---
+title: "Shooting Down the “More Guns, Less Crime” Hypothesis"
+output:
+  pdf_document: default
+  html_document: default
+date: "2023-10-02"
+---
+
+```{r setup, include=FALSE}
+library(ggiplot)
+library(fixest)
+library(did2s)
+library(lubridate)
+library(broom)
+library(usmap)
+library(mapdata)
+library(dplyr)
+library(maps)
+library(ggpubr)
+library(tidyverse)
+library(AER)
+library(ggplot2)
+library(ggcorrplot)
+```
+
+
+```{r}
+data("Guns")
+Guns$year <- as.numeric(as.character(Guns$year))
+```
+
+# INTRODUCTION
+
+The impact of guns on crime in America has triggered a lot of public debate. Many strongly believe that state laws enabling citizens to carry concealed handguns had reduced crime. According to this view, gun control laws take away guns from law-abiding citizens, while would-be criminals ignore those leaving potential victims defenceless. Following this view, The National Rifle Association (NRA) and many politicians across the country advance the cause of greater freedom to carry guns. As a result, many states in the United States have passed right-to-carry laws (also known as a shall-issue laws).
+
+A Shall-issue law is one that requires that governments issue concealed carry handgun permits to any applicant who meets the necessary criteria. These criteria are: the applicant must
+
+-   be an adult
+-   have no significant criminal record
+-   no history of mental illness
+-   have successfully complete a course in firearms safety training (if required by law).
+
+If these criteria are met, the granting authority has no discretion in the awarding of the licenses, and there is no requirement of the applicant to demonstrate "good cause". Guns is a balanced panel of data on 50 US states, plus the District of Columbia (for a total of 51 "states"), by year for 1977 -- 1999. Each observation is a given state in a given year. There are a total of 51 states × 23 years = 1173 observations.
+
+
+```{r}
+never_passed_law <- c("Alabama", "California", "Colorado", "Connecticut", "Delaware", "District of Columbia", "Hawaii", "Illinois", "Iowa", "Kansas", "Maryland", "Massachusetts", "Michigan", "Minnesota", "Missouri", "Nebraska", "New Jersey", "New Mexico", "New York", "Ohio", "Rhode Island", "Wisconsin")
+
+pre1977 <- c("Indiana", "New Hampshire", "Vermont", "Washington")
+
+post1977_pre1990 <- c("Florida", "Georgia", "Maine", "North Dakota", "Pennsylvania", "South Dakota", "Utah", "West Virginia")
+
+post_1990 <- c("Alaska", "Arizona", "Arkansas", "Idaho", "Kentucky", "Louisiana", "Mississippi", "Montana", "Nevada", "North Carolina", "Oklahoma", "Oregon", "South Carolina", "Tennessee", "Texas", "Virginia", "Wyoming")
+
+vectors_list <- list(
+  never_passed_law = never_passed_law,
+  pre1977 = pre1977,
+  post1977_pre1990 = post1977_pre1990, 
+  post_1990 = post_1990
+  )
+
+# Sample vectors with different lengths
+
+# Create a dataframe with elements and corresponding vector names
+introd <- data.frame(
+  state = unlist(vectors_list),
+  introduction = rep(names(vectors_list), sapply(vectors_list, length))
+)
+
+Guns <- merge(Guns, introd, by = "state", all.x = TRUE)
+
+```
+
+
+```{r}
+mean_v <- Guns %>%
+  group_by(year, introduction) %>%
+  summarise(mean_violent = round(mean(violent), 2))
+
+mean_m <- Guns %>%
+  group_by(year, introduction) %>%
+  summarise(mean_murder = round(mean(murder), 2))
+
+mean_r <- Guns %>%
+  group_by(year, introduction) %>%
+  summarise(mean_robbery = round(mean(robbery), 2))
+```
+
+```{r}
+ggplot(mean_v, aes(x = ymd(year, truncated = 2L), y = mean_violent, group = introduction, color = introduction, shape = introduction)) + 
+  geom_line(linewidth=2) +
+  geom_point(size = 5) +
+  scale_shape_manual(values=c(15,17,18,20))+
+  labs(col = "Introduction", x = "Year", y = "Violent Crimes per 100,000 population") +
+  theme_minimal() + 
+  theme(legend.position = "right")+
+  guides(colour = guide_legend(override.aes = list(shape = c(15, 17, 18, 20))), shape = "none") +
+  geom_vline(xintercept = as.numeric(ymd("1980-01-01")), linetype="dashed",color = "blue", linewidth=1.5) +
+  geom_vline(xintercept = as.numeric(ymd("1990-01-01")), linetype="dashed",color = "blue", linewidth=1.5)
+```
+
+```{r}
+before_after <- Guns[Guns$introduction != "pre1977", ]
+before_after <- before_after[before_after$introduction != "post_1990", ]
+
+before_after$after_1980 <- ifelse(before_after$year > 1979, 1, 0)
+
+diffs_guns <- before_after %>% 
+  group_by(introduction, after_1980) %>% 
+  summarize(mean_violent = mean(violent))
+
+diffs_guns
+
+before_treatment <- diffs_guns %>% 
+  filter(after_1980 == 0, introduction == "post1977_pre1990") %>% 
+  pull(mean_violent)
+
+before_control <- diffs_guns %>% 
+  filter(after_1980 == 0, introduction == "never_passed_law") %>% 
+  pull(mean_violent)
+
+after_treatment <- diffs_guns %>% 
+  filter(after_1980 == 1, introduction == "post1977_pre1990") %>% 
+  pull(mean_violent)
+
+after_control <- diffs_guns %>% 
+  filter(after_1980 == 1, introduction == "never_passed_law") %>% 
+  pull(mean_violent)
+
+diff_treatment_before_after <- after_treatment - before_treatment
+diff_treatment_before_after
+
+diff_control_before_after <- after_control - before_control
+diff_control_before_after
+
+diff_diff <- diff_treatment_before_after - diff_control_before_after
+diff_diff
+```
+
+```{r}
+ggplot(diffs_guns, aes(x = as.factor(after_1980), 
+                  y = mean_violent, 
+                  color = as.factor(introduction))) + 
+  geom_point(size = 4) +
+  geom_line(aes(group = as.factor(introduction)), linewidth= 2) +
+  theme_minimal() +
+  # If you use these lines you'll get some extra annotation lines and
+  # labels. The annotate() function lets you put stuff on a ggplot that's not
+  # part of a dataset. Normally with geom_line, geom_point, etc., you have to
+  # plot data that is in columns. With annotate() you can specify your own x and
+  # y values.
+  annotate(geom = "segment", x = "0", xend = "1",
+           y = before_treatment, yend = after_treatment - diff_diff,
+           linetype = "dashed", color = "grey50") +
+  annotate(geom = "segment", x = "1", xend = "1",
+           y = after_treatment, yend = after_treatment - diff_diff,
+           linetype = "dotted", color = "blue") +
+  annotate(geom = "label", x = "1", y = after_treatment - (diff_diff / 2), 
+           label = "Program effect", size = 3)
+```
+
+
+```{r}
+u_l <- ggplot(mean_v, aes(x = ymd(year, truncated = 2L), y = mean_violent, group = introduction, color = introduction, shape = introduction)) +
+  ggtitle("Early Group vs. Untreated Group") +
+  geom_line(linewidth=2) +
+  geom_point(size = 5) +
+  scale_shape_manual(values=c(15,17,18,20))+
+  labs(col = "Introduction", x = "Year", y = "Violent Crimes") +
+  scale_color_manual(values = c("#F8766D", "#00BFC4", "transparent", "transparent")) +
+  theme_minimal() + 
+  theme(legend.position = "none")+
+  guides(colour = guide_legend(override.aes = list(shape = c(15, 17, 18, 20))), shape = "none") +
+  geom_vline(xintercept = as.numeric(ymd("1990-01-01")), linetype="dashed",color = "#00BFC4", linewidth=1.5)
+
+u_e <- ggplot(mean_v, aes(x = ymd(year, truncated = 2L), y = mean_violent, group = introduction, color = introduction, shape = introduction)) + 
+  ggtitle("Late Group vs. Untreated Group") +
+  geom_line(linewidth=2) +
+  geom_point(size = 5) +
+  scale_shape_manual(values=c(15,17,18,20))+
+  labs(col = "Introduction", x = "Year", y = "Violent Crimes") +
+  scale_color_manual(values = c("#F8766D", "transparent", "#00BA38", "transparent")) +
+  theme_minimal() + 
+  theme(legend.position = "none")+
+  guides(colour = guide_legend(override.aes = list(shape = c(15, 17, 18, 20))), shape = "none") +
+  geom_vline(xintercept = as.numeric(ymd("1980-01-01")), linetype="dashed",color = "#00BA38", linewidth=1.5)
+
+e_l_b <- ggplot(mean_v, aes(x = ymd(year, truncated = 2L), y = mean_violent, group = introduction, color = introduction, shape = introduction)) + 
+  ggtitle("Early Group vs. Late Group, before treatment") +
+  geom_line(linewidth=2) +
+  geom_point(size = 5) +
+  scale_shape_manual(values=c(15,17,18,20))+
+  labs(col = "Introduction", x = "Year", y = "Violent Crimes") +
+  scale_color_manual(values = c("transparent", "#00BFC4", "#00BA38", "transparent")) +
+  theme_minimal() + 
+  theme(legend.position = "none")+
+  guides(colour = guide_legend(override.aes = list(shape = c(15, 17, 18, 20))), shape = "none") +
+  geom_vline(xintercept = as.numeric(ymd("1980-01-01")), linetype="dashed",color = "#00BA38", linewidth=1.5)
+
+e_l_a <- ggplot(mean_v, aes(x = ymd(year, truncated = 2L), y = mean_violent, group = introduction, color = introduction, shape = introduction)) +
+  ggtitle("Early Group vs. Late Group, after treatment") +
+  geom_line(linewidth=2) +
+  geom_point(size = 5) +
+  scale_shape_manual(values=c(15,17,18,20))+
+  labs(col = "Introduction", x = "Year", y = "Violent Crimes") +
+  scale_color_manual(values = c("transparent", "#00BFC4", "#00BA38", "transparent")) +
+  theme_minimal() + 
+  theme(legend.position = "none")+
+  guides(colour = guide_legend(override.aes = list(shape = c(15, 17, 18, 20))), shape = "none") +
+  geom_vline(xintercept = as.numeric(ymd("1990-01-01")), linetype="dashed",color = "#00BFC4", linewidth=1.5)
+
+```
+
+```{r}
+ggarrange(u_e, u_l, e_l_b, e_l_a, ncol=2, nrow=2, common.legend = TRUE, legend="none")
+```
+
+
+
+```{r}
+# REMOVING PRE 1977 LAW ADOPTING OBS
+treat <- Guns[Guns$introduction != "pre1977", ]
+
+# ADDING COLUMN TRUE/FALSE FOR LAW
+treat$law <- ifelse(treat$introduction == "post1977_pre1990" & treat$year > 1979, TRUE, 
+                    ifelse(treat$introduction == "post_1990" & treat$year > 1989, TRUE, FALSE))
+
+# ADDING FIRST TREATMENT YEAR
+treat$first_treat <- ifelse(treat$introduction == "post1977_pre1990", 1980, 
+                              ifelse(treat$introduction == "post_1990", 1990, 0))
+
+# ADDING RELATIVE TIME TO TREATMENT
+treat$rel_time <-  ifelse(treat$first_treat == 0, Inf, treat$year - treat$first_treat)
+
+```
+
+```{r}
+static_v <- did2s(
+  data = treat,
+  yname = "violent",
+  first_stage = ~ 0 | introduction + year,
+  second_stage = ~ i(law, ref = FALSE), 
+  treatment = "law",
+  cluster_var = "introduction"
+)
+
+fixest::etable(static_v)
+```
+
+
+```{r}
+es_v <- did2s(
+  data = treat,
+  yname = "violent",
+  treatment = "law",
+  first_stage = ~ 0 | introduction + year,
+  second_stage = ~ i(rel_time, ref = c(-1, Inf)),
+  cluster_var = "introduction"
+)
+```
+
+```{r}
+ggiplot(es_v, main = "Event study: Staggered treatment", xlab = "Relative time to treatment", col = "steelblue")
+```
+
+```{r}
+static_m <- did2s(
+  data = treat,
+  yname = "murder", 
+  first_stage = ~ 0 | introduction + year,
+  second_stage = ~ i(law, ref = FALSE), 
+  treatment = "law",
+  cluster_var = "introduction"
+)
+
+fixest::etable(static_m)
+```
+
+
+```{r}
+es_m <- did2s(
+  data = treat,
+  yname = "murder", 
+  first_stage = ~ 0 | introduction + year,
+  second_stage = ~ i(rel_time, ref = c(-1, Inf)), 
+  treatment = "law",
+  cluster_var = "introduction"
+)
+```
+
+```{r}
+ggiplot(es_m, main = "Event study: Staggered treatment", xlab = "Relative time to treatment", col = "steelblue")
+```
+
+```{r}
+static_r <- did2s(
+  data = treat,
+  yname = "robbery", 
+  first_stage = ~ 0 | introduction + year,
+  second_stage = ~ i(law, ref = FALSE), 
+  treatment = "law",
+  cluster_var = "introduction"
+)
+
+fixest::etable(static_r)
+```
+
+
+```{r}
+es_r <- did2s(
+  data = treat,
+  yname = "robbery", 
+  first_stage = ~ 0 | introduction + year,
+  second_stage = ~ i(rel_time, ref = c(-1, Inf)), 
+  treatment = "law",
+  cluster_var = "introduction"
+)
+```
+
+```{r}
+ggiplot(es_r, main = "Event study: Staggered treatment", xlab = "Relative time to treatment", col = "steelblue")
+```
+
+```{r}
+p_v <- ggplot(mean_v, aes(x = year, y = mean_violent, color = introduction)) +
+  geom_line(linewidth=2) +
+  geom_point(size = 2.5) +
+  labs(y = "Violent", x = element_blank()) +
+  theme_minimal()
+
+p_m <- ggplot(mean_m, aes(x = year, y = mean_murder, color = introduction)) +
+  geom_line(linewidth=2) +
+  geom_point(size = 2.5) +
+  labs(y = "Murder", x = element_blank()) +
+  theme_minimal()
+  
+p_r <- ggplot(mean_r, aes(x = year, y = mean_robbery, color = introduction)) +
+  geom_line(linewidth=2) +
+  geom_point(size = 2.5) +
+  labs(y = "Robbery", x = "Year") +
+  theme_minimal()
+
+```
+
+```{r}
+ggarrange(p_v, p_m, p_r, ncol=2, nrow=2, common.legend = TRUE, legend="right")
+```
+
+```{r}
+ggplot(mean_r, aes(x = ymd(year, truncated = 2L), y = mean_robbery, group = introduction, color = introduction, shape = introduction)) + 
+  geom_line(linewidth=2) +
+  geom_point(size = 5) +
+  scale_shape_manual(values=c(15,17,18,20))+
+  labs(col = "Introduction", x = "Year", y = "Robbery per 100,000 population") +
+  theme_minimal() + 
+  theme(legend.position = "right")+
+  guides(colour = guide_legend(override.aes = list(shape = c(15, 17, 18, 20))), shape = "none") +
+  geom_vline(xintercept = as.numeric(ymd("1980-01-01")), linetype="dashed",color = "blue", linewidth=1.5) +
+  geom_vline(xintercept = as.numeric(ymd("1990-01-01")), linetype="dashed",color = "blue", linewidth=1.5)
+```
+
+```{r}
+ggplot(mean_m, aes(x = ymd(year, truncated = 2L), y = mean_murder, group = introduction, color = introduction, shape = introduction)) + 
+  geom_line(linewidth=2) +
+  geom_point(size = 5) +
+  scale_shape_manual(values=c(15,17,18,20))+
+  labs(col = "Introduction", x = "Year", y = "Murder per 100,000 population") +
+  theme_minimal() + 
+  theme(legend.position = "right")+
+  guides(colour = guide_legend(override.aes = list(shape = c(15, 17, 18, 20))), shape = "none") +
+  geom_vline(xintercept = as.numeric(ymd("1980-01-01")), linetype="dashed",color = "blue", linewidth=1.5) +
+  geom_vline(xintercept = as.numeric(ymd("1990-01-01")), linetype="dashed",color = "blue", linewidth=1.5)
+```
